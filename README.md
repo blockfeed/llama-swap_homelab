@@ -1,8 +1,8 @@
 # llama-swap homelab
 
-Twenty-plus LLM variants — instruct, thinking, vision, agent — on a single consumer GPU over a local OpenAI-compatible API. VRAM swaps automatically between models. Behavioral profiles switch without reloading via per-request parameter injection.
+Configuration files for a multi-model LLM inference server on a single consumer GPU — twenty-plus model variants (instruct, thinking, vision, agent) over a local OpenAI-compatible API, built on [llama-swap](https://github.com/mostlygeek/llama-swap). The intent is to document and version-control one practical approach: an AMD Radeon RX 7900 XTX, 24 GB of VRAM, models tuned to fit within it one at a time without latency from reloads.
 
-All on one AMD Radeon RX 7900 XTX (24 GB). Tuned to fit appropriately, one model at a time, into that ceiling — without incurring a latency hit due to model reload. That meant working through KV cache quantization, per-model context sizing, GPU power management, and MTP speculative decoding.
+That meant working through KV cache quantization, per-model context sizing, GPU power management, and MTP speculative decoding. MTP models depend on a patched llama-server — Arch Linux PKGBUILD at [blockfeed/llama-cpp-mtp-hip](https://github.com/blockfeed/llama-cpp-mtp-hip).
 
 ---
 
