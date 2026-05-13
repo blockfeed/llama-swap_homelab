@@ -1,10 +1,8 @@
 # llama-swap homelab
 
-Hot-swappable multi-model LLM inference on a single consumer GPU, orchestrated by [llama-swap](https://github.com/mostlygeek/llama-swap). Twenty-plus model variants — instruct, thinking, vision, agent — available on demand over a local OpenAI-compatible API, with automatic VRAM eviction between models and zero-reload switching between behavioral profiles via per-request parameter injection.
+Twenty-plus LLM variants — instruct, thinking, vision, agent — on a single consumer GPU over a local OpenAI-compatible API. VRAM swaps automatically between models. Behavioral profiles switch without reloading via per-request parameter injection.
 
-The whole thing runs on one AMD Radeon RX 7900 XTX. Fitting that many models into 24 GB required working through a series of constraints: KV cache quantization to reclaim VRAM, context size tuning per model family, GPU runtime power management to eliminate cold-start latency, and MTP speculative decoding to push throughput well above what stock llama.cpp achieves.
-
-This repository is the complete, version-controlled configuration.
+All on one AMD Radeon RX 7900 XTX (24 GB). Tuned to fit appropriately, one model at a time, into that ceiling — without incurring a latency hit due to model reload. That meant working through KV cache quantization, per-model context sizing, GPU power management, and MTP speculative decoding.
 
 ---
 
@@ -25,7 +23,7 @@ The llama.cpp binary is a custom Arch Linux package built from the MTP speculati
 
 ## Architecture
 
-llama-swap is a reverse proxy that sits in front of any number of llama-server instances. Each model entry in `config.yaml` defines a command to launch one backend; llama-swap starts it on first request, routes traffic to it, and tears it down after an idle TTL expires. Only one large model fits in VRAM at a time, so this is effectively a demand-paged model scheduler with a shared GPU.
+Each model entry in `config.yaml` defines a command to launch a llama-server backend. llama-swap starts it on first request, routes traffic, and tears it down after an idle TTL. Only one large model fits in VRAM at a time — demand-paged model scheduling with a shared GPU.
 
 The service is managed by systemd with a drop-in override to bind to the LAN rather than localhost — details in [`system/`](system/README.md).
 
