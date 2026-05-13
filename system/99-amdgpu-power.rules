@@ -1,0 +1,26 @@
+# =============================================================================
+# udev rule: Disable runtime power management for amdgpu devices
+# =============================================================================
+# Purpose: Prevent AMD GPU from entering D3hot (PCI suspend) at boot, before
+#          llama-swap starts. Complements the systemd drop-in (which handles
+#          the service lifecycle) by ensuring the GPU starts in D0 from boot.
+#
+# Problem: Linux runtime PM suspends the GPU (D3hot) when idle. On wake-up,
+#          the memory clock (mclk) must ramp from 96 MHz back to 1249 MHz.
+#          This ramp-up takes 2-5 seconds, degrading early-token throughput
+#          on the first request after a model unloads.
+#
+# Install path: /etc/udev/rules.d/99-amdgpu-power.rules
+#
+# Apply without reboot:
+#   sudo udevadm control --reload-rules
+#   (existing device won't be re-triggered; use apply-gpu-power.sh for an
+#    immediate sysfs write, or reboot for full activation)
+#
+# Verification after reboot:
+#   cat /sys/class/drm/card0/device/power/control   # should read "on"
+#   cat /sys/class/drm/card0/device/power_state     # should read "D0"
+# =============================================================================
+
+# Match any PCI device bound to the amdgpu driver and disable runtime suspend.
+ACTION=="add", SUBSYSTEM=="pci", DRIVER=="amdgpu", ATTR{power/control}="on"

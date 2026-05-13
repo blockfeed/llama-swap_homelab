@@ -1,0 +1,595 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
+#
+# llama-swap configuration — AMD RX 7900 XTX (24 GB VRAM, ROCm, RDNA3)
+#
+# Overview:
+#   llama-swap is a reverse proxy that hot-swaps llama-server instances on
+#   demand. Each model entry below defines a backend command; llama-swap
+#   launches it on first request, routes traffic, and evicts it after the TTL.
+#
+#   Only one large model fits in 24 GB at a time. The scheduler is
+#   demand-paged: requesting a model that isn't loaded evicts whatever is.
+#
+# VRAM ceiling: 93% (22.3 GB). Above this, ROCm spills into GTT (system RAM
+# via PCIe), which degrades throughput and eventually causes segfaults.
+#
+# Macro system:
+#   Macros expand to full llama-server command lines. IMPORTANT: llama-swap
+#   silently ignores --ctx-size when a macro references another macro. All
+#   macros here inline ${base} only — one level deep. Context size always
+#   goes in the model entry, never in a macro.
+
+# 3-minute window for large MoE models to finish loading layers before the
+# health check declares failure. Default 30 s is too short for 30B+ models.
+healthCheckTimeout: 180
+
+# Default idle TTL: 1 hour. Individual model entries override to 8 h (28800)
+# for backends that should stay resident across long sessions.
+globalTTL: 3600
+
+# Show all aliases in the /v1/models listing so clients can address specific
+# behavioral variants by ID (e.g., "qwen36-chat" vs "qwen36-code").
+includeAliasesInList: true
+
+# Capture stdout and stderr from both llama-swap and the model backends.
+# Needed to diagnose ROCm OOM errors and Jinja template failures.
+logToStdout: "both"
+
+# First port assigned to a model instance; increments by 1 per loaded model.
+startPort: 8081
+
+# Preload the primary agent backend at service start so the first request
+# doesn't pay the model load penalty.
+hooks:
+  on_startup:
+    preload:
+      - "qwen36-agent"
+
+# ─── Macros ──────────────────────────────────────────────────────────────────
+
+macros:
+  # Base — inherited by all models via ${base}.
+  #
+  # --n-gpu-layers 999: offload all layers to GPU; no CPU fallback.
+  # --cache-type-k/v q4_0: 4-bit KV cache quantization. Halves KV VRAM vs
+  #   fp16 with negligible quality impact at chat-length contexts.
+  # --host 0.0.0.0: bind all interfaces (LAN clients need this).
+  # --jinja: use Jinja2 templates from GGUF metadata (required for correct
+  #   system prompt formatting across Qwen, Mistral, GLM families).
+  # --flash-attn on: Flash Attention 2, faster inference on RDNA3.
+  # -ub/-b 2048: batch sizes balanced for 24 GB — higher risks OOM under MoE.
+  "base": >
+    /usr/bin/llama-server
+    --port ${PORT}
+    --n-gpu-layers 999
+    --cache-type-k q4_0
+    --cache-type-v q4_0
+    --host 0.0.0.0
+    --jinja
+    --flash-attn on
+    -ub 2048
+    -b 2048
+
+  # GLM-4.7 agent mode.
+  #
+  # --parallel 1: GLM-4.7 uses DeepSeek2/MLA (Multi-Linear Attention).
+  #   Default n_parallel=4 collapses throughput from ~60 t/s to 2-8 t/s under
+  #   concurrent load. This is an architectural constraint, not a tuning choice.
+  # Params match upstream GLM-4.7 recommendations: top-p 1.0, no top-k,
+  # min-p 0.01 to trim the very low probability tail.
+  "glm47_agent": >
+    ${base}
+    --parallel 1
+    --temp 0.7
+    --top-p 1.0
+    --top-k 0
+    --min-p 0.01
+    --repeat-penalty 1.0
+
+  # GLM-4.7 thinking mode. Higher temp for exploratory reasoning.
+  # top-k 20 constrains vocabulary to keep reasoning traces focused.
+  "glm47_thinking": >
+    ${base}
+    --parallel 1
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.01
+    --repeat-penalty 1.0
+
+  # Qwen3.5 thinking mode.
+  #
+  # Uses --chat-template-kwargs '{"enable_thinking": true}' — this is the
+  # Qwen3.5 mechanism. DO NOT use on Qwen3.6; Qwen3.6 uses a different Jinja
+  # template and the preserve_thinking/--reasoning flags instead. Cross-applying
+  # silently misbehaves (thinking tokens leak or disappear).
+  "qwen35_thinking": >
+    ${base}
+    --reasoning on
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+    --repeat-penalty 1.0
+
+  # Qwen3.6 agent: thinking disabled, multi-turn context preserved.
+  #
+  # --reasoning off: no <think>...</think> blocks emitted (Qwen3.6 flag).
+  # preserve_thinking=true: retains prior-turn thinking context in multi-turn
+  #   workflows even when the current response uses non-thinking mode.
+  # Params per Unsloth Qwen3.6 non-thinking general task recommendations.
+  "qwen36_agent": >
+    ${base}
+    --reasoning off
+    --chat-template-kwargs '{"preserve_thinking":true}'
+    --temp 0.7
+    --top-p 0.8
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+
+  # Qwen3.6 thinking: full reasoning mode with prior-turn trace retention.
+  # Params per Unsloth Qwen3.6 thinking general task recommendations.
+  "qwen36_thinking": >
+    ${base}
+    --reasoning on
+    --chat-template-kwargs '{"preserve_thinking":true}'
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+    --repeat-penalty 1.0
+
+  # Qwen3.6 coding: non-thinking, precision-optimized sampling.
+  #
+  # Lower temp (0.6) and presence_penalty=0.0 for coding tasks. Code benefits
+  # from repetition (patterns, boilerplate); presence_penalty would suppress it.
+  # Per Unsloth Qwen3.6 precise coding task recommendations.
+  "qwen36_code": >
+    ${base}
+    --reasoning off
+    --chat-template-kwargs '{"preserve_thinking":true}'
+    --temp 0.6
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 0.0
+    --repeat-penalty 1.0
+
+  # Qwen3.6 casual/interactive: non-thinking, no preserve_thinking overhead.
+  # For shorter sessions where prior-turn thinking context isn't needed.
+  "qwen36_paseo": >
+    ${base}
+    --reasoning off
+    --temp 0.7
+    --top-p 0.8
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+    --repeat-penalty 1.0
+
+  # Qwen3.6 MTP agent: shared by both 35B-A3B-MTP and 27B-MTP agent profiles.
+  #
+  # --spec-type mtp: enables Multi-Token Prediction speculative decoding.
+  #   Requires the MTP-patched llama-server (am17an/mtp-clean branch).
+  # --spec-draft-n-max 2: draft up to 2 speculative tokens per step.
+  #   Unsloth recommendation for Qwen3.6 MTP; higher values have diminishing
+  #   returns and increase rejection overhead.
+  # --parallel 1: MTP does not support concurrent request slots. Hard requirement.
+  "qwen36_mtp_agent": >
+    ${base}
+    --parallel 1
+    --reasoning off
+    --chat-template-kwargs '{"preserve_thinking":true}'
+    --temp 0.7
+    --top-p 0.8
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+    --spec-type mtp
+    --spec-draft-n-max 2
+
+  # Qwen3.6 MTP thinking — 35B-A3B variant.
+  # presence_penalty=1.5 per Unsloth Qwen3.6-35B-A3B-MTP documentation.
+  # Thinking mode runs faster than agent mode with MTP: chain-of-thought tokens
+  # are more predictable, giving draft heads higher acceptance rates.
+  "qwen36_mtp_thinking": >
+    ${base}
+    --parallel 1
+    --reasoning on
+    --chat-template-kwargs '{"preserve_thinking":true}'
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+    --repeat-penalty 1.0
+    --spec-type mtp
+    --spec-draft-n-max 2
+
+  # Qwen3.6 MTP thinking — 27B dense variant.
+  # presence_penalty=0.0 per Unsloth Qwen3.6-27B-MTP documentation. This
+  # differs from the 35B-A3B recommendation (1.5). Each model has its own
+  # macro so the difference is explicit and doesn't get lost in shared config.
+  "qwen36_27b_mtp_thinking": >
+    ${base}
+    --parallel 1
+    --reasoning on
+    --chat-template-kwargs '{"preserve_thinking":true}'
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 0.0
+    --repeat-penalty 1.0
+    --spec-type mtp
+    --spec-draft-n-max 2
+
+  # Rocinante-X-12B: Mistral-Nemo derivative. repeat-penalty=1.1 counters the
+  # Nemo architecture's tendency toward repetitive output in long generations.
+  "rocinante_general": >
+    ${base}
+    --temp 0.7
+    --top-p 0.9
+    --top-k 40
+    --min-p 0.0
+    --repeat-penalty 1.1
+
+  # Qwen3-VL: vision-language model, Qwen3.5 template family (uses --reasoning,
+  # NOT preserve_thinking). Vision models require --n-gpu-layers 100,100
+  # (format: cpu_layers,gpu_layers) and an mmproj file.
+  "qwen3vl_thinking": >
+    ${base}
+    --reasoning on
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+    --repeat-penalty 1.0
+
+  # Qwen2-VL: uses its own ChatML template. No enable_thinking flag needed.
+  "qwen2vl_thinking": >
+    ${base}
+    --temp 1.0
+    --top-p 0.95
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+    --repeat-penalty 1.0
+
+  # GRaPE-2-Pro: Qwen3.5 architecture with custom thinking depth tags.
+  # Does NOT use enable_thinking. Reasoning depth is controlled by
+  # <thinking_mode=X> at the end of the user prompt (not system prompt):
+  #   minimal / low / medium / high / xtra-hi / auto
+  "grape2_thinking": >
+    ${base}
+    --temp 0.6
+    --top-p 0.95
+    --top-k 20
+    --min-p 0
+    --repeat-penalty 1.0
+
+  # Qwen3.5 agent: non-thinking mode for Qwen3.5 small models.
+  # enable_thinking=false is explicit even though it's off by default on
+  # small models — prevents accidental activation if defaults change.
+  "qwen35_agent": >
+    ${base}
+    --reasoning off
+    --temp 0.7
+    --top-p 0.8
+    --top-k 20
+    --min-p 0.0
+    --presence-penalty 1.5
+
+# ─── Models ──────────────────────────────────────────────────────────────────
+
+models:
+  # ── Qwen3.6-35B-A3B: Primary multi-variant model ─────────────────────────
+  #
+  # Single llama-server process serving five behavioral profiles via
+  # setParamsByID. The server launches once with qwen36_agent defaults;
+  # setParamsByID rewrites sampling parameters and template kwargs per-request
+  # without restarting. Avoids the ~5.5 s reload on each variant switch.
+  #
+  # GGUF: Qwen3.6-35B-A3B-UD-IQ4_XS (~17.5 GB)
+  # MoE: 128 experts, 3 activated per token (~3.5B active params)
+  #
+  # Variants:
+  #   qwen36-agent — tool-calling, reasoning off, temp=0.7
+  #   qwen36-code  — precise coding, reasoning off, temp=0.6
+  #   qwen36-paseo / paseo         — casual chat, reasoning off, temp=0.7
+  #   qwen36-chat                  — thinking mode, reasoning on, temp=1.0
+  #   qwen36-plan                  — planning/research, reasoning on, temp=1.0
+  "qwen36-35b-a3b":
+    name: "Qwen3.6 35B A3B"
+    cmd: >
+      ${qwen36_agent}
+      --model /opt/llama/models/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+      --ctx-size 102400
+    ttl: 28800
+    metadata:
+      role: developer
+    filters:
+      setParams:
+        chat_template_kwargs:
+          enable_thinking: false
+          preserve_thinking: true
+      setParamsByID:
+        "qwen36-agent":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
+        "qwen36-code":
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
+        "qwen36-paseo":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+        "paseo":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+        "qwen36-chat":
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+        "qwen36-plan":
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+    aliases:
+      - "qwen36-agent"
+      - "qwen36-code"
+      - "qwen36-chat"
+      - "qwen36-plan"
+      - "qwen36-paseo"
+      - "paseo"
+
+  # ── Mistral Small 3.2 24B ─────────────────────────────────────────────────
+  # Dense 24B, alternative agent backend. Good fallback for long-context tasks.
+  # GGUF: UD-Q4_K_XL (~16 GB)
+  "agent-mistral":
+    name: "Mistral-Small-3.2-24B-Instruct-2506"
+    cmd: >
+      ${qwen36_agent}
+      --model /opt/llama/models/Mistral-Small-3.2-24B-Instruct-2506/Mistral-Small-3.2-24B-Instruct-2506-UD-Q4_K_XL.gguf
+      --ctx-size 92160
+    ttl: 28800
+    metadata:
+      role: developer
+
+  # ── Qwen3.5-9B ───────────────────────────────────────────────────────────
+  # Fastest agent backend. ~120-150 t/s, fits comfortably alongside other models.
+  # GGUF: UD-Q5_K_XL (~6.3 GB)
+  "qwen35-9b":
+    name: "Qwen3.5 9B (General)"
+    cmd: >
+      ${qwen35_agent}
+      --model /opt/llama/models/Qwen3.5-9B/Qwen3.5-9B-UD-Q5_K_XL.gguf
+      --ctx-size 122880
+    ttl: 28800
+    metadata:
+      role: developer
+
+  # ── GLM-4.7-Flash-REAP 23B ───────────────────────────────────────────────
+  # MoE-style with MLA attention. --parallel 1 is mandatory (see glm47_agent macro).
+  # GGUF: UD-Q4_K_XL (~16.5 GB)
+  "glm47-agent":
+    name: "GLM-4.7 Flash REAP 23B (Agent)"
+    cmd: >
+      ${glm47_agent}
+      --model /opt/llama/models/GLM-4.7-Flash-REAP-23B-A3B/GLM-4.7-Flash-REAP-23B-A3B-UD-Q4_K_XL.gguf
+      --ctx-size 65536
+    ttl: 28800
+    metadata:
+      role: developer
+
+  "glm47-thinking":
+    name: "GLM-4.7 Flash REAP 23B (Thinking)"
+    cmd: >
+      ${glm47_thinking}
+      --model /opt/llama/models/GLM-4.7-Flash-REAP-23B-A3B/GLM-4.7-Flash-REAP-23B-A3B-UD-Q4_K_XL.gguf
+      --ctx-size 65536
+    ttl: 28800
+    metadata:
+      role: user
+
+  # ── Qwen3.6 MTP Models ────────────────────────────────────────────────────
+  #
+  # Multi-Token Prediction speculative decoding: ~1.5-2x faster generation via
+  # internal draft heads. Requires the MTP-patched llama-server binary.
+  # See: https://github.com/ggml-org/llama.cpp/pull/22673
+  #      https://github.com/blockfeed/llama-cpp-mtp-hip (Arch package)
+  #
+  # Hard constraints: --parallel 1 only; --mmproj not supported with MTP.
+  #
+  # To revert: remove these 4 entries and the 3 qwen36_mtp_*/qwen36_27b_mtp_*
+  # macros above. The patched binary is fully compatible with non-MTP models.
+
+  # GGUF: Qwen3.6-35B-A3B-UD-IQ4_NL (~18.9 GB). IQ4_NL vs IQ4_XS: slightly
+  # heavier quant, marginally better quality at comparable VRAM cost.
+  "qwen36-35b-a3b-mtp-agent":
+    name: "Qwen3.6 35B A3B MTP (Agent)"
+    cmd: >
+      ${qwen36_mtp_agent}
+      --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-IQ4_NL.gguf
+      --ctx-size 102400
+    ttl: 28800
+    metadata:
+      role: developer
+
+  "qwen36-35b-a3b-mtp-chat":
+    name: "Qwen3.6 35B A3B MTP (Thinking)"
+    cmd: >
+      ${qwen36_mtp_thinking}
+      --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-IQ4_NL.gguf
+      --ctx-size 102400
+    ttl: 28800
+    metadata:
+      role: user
+
+  # GGUF: Qwen3.6-27B-Q4_K_M (~15.7 GB). Dense model — all 27B params active
+  # per token, so it's slower than the MoE variant despite fewer total params.
+  "qwen36-27b-mtp-agent":
+    name: "Qwen3.6 27B MTP (Agent)"
+    cmd: >
+      ${qwen36_mtp_agent}
+      --model /opt/llama/models/Qwen3.6-27B-MTP/Qwen3.6-27B-Q4_K_M.gguf
+      --ctx-size 94208
+    ttl: 28800
+    metadata:
+      role: developer
+
+  "qwen36-27b-mtp-reasoning":
+    name: "Qwen3.6 27B MTP (Reasoning)"
+    cmd: >
+      ${qwen36_27b_mtp_thinking}
+      --model /opt/llama/models/Qwen3.6-27B-MTP/Qwen3.6-27B-Q4_K_M.gguf
+      --ctx-size 94208
+    ttl: 28800
+    metadata:
+      role: user
+
+  # ── Other Models ──────────────────────────────────────────────────────────
+
+  # Qwen3.6-27B dense (non-MTP). Heavier per-token compute than MoE; preferred
+  # for deep reasoning sessions where MoE sparsity may miss subtle activations.
+  # GGUF: UD-Q4_K_XL (~17 GB). At the VRAM ceiling — monitor after loading.
+  "qwen36-27b-reasoning":
+    name: "Qwen3.6 27B (Reasoning)"
+    cmd: >
+      ${qwen36_thinking}
+      --model /opt/llama/models/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf
+      --ctx-size 94208
+    ttl: 28800
+    metadata:
+      role: user
+
+  # Abliterated merge of Qwen3.5-27B. Reduced epistemic honesty — may assert
+  # confidently where the base model would hedge or refuse. Not for agent use.
+  "qwen35-27b-abliterated":
+    name: "Qwen3.5 27B Abliterated (Thinking)"
+    cmd: >
+      ${qwen35_thinking}
+      --model /opt/llama/models/Qwen3.5-27B-abliterated/Qwen3.5-27B-Abliterated.Q4_K_M.gguf
+      --ctx-size 90112
+    ttl: 28800
+    metadata:
+      role: user
+
+  # Rocinante-X-12B-v1b: Mistral-Nemo derivative, Q8_0 for maximum quality.
+  # Short context (16k) saves VRAM; voice sessions rarely exceed 8k anyway.
+  "rocinante-x-12b":
+    name: "Rocinante X 12B v1b (General)"
+    cmd: >
+      ${rocinante_general}
+      --model /opt/llama/models/Rocinante-X-12B/Rocinante-X-12B-v1b-Q8_0.gguf
+      --ctx-size 16384
+    ttl: 28800
+    metadata:
+      role: user
+
+  # ── GRaPE-2-Pro ──────────────────────────────────────────────────────────
+  "grape2-thinking":
+    name: "GRaPE 2 Pro (Thinking)"
+    cmd: >
+      ${grape2_thinking}
+      --model /opt/llama/models/GRaPE-2-Pro/GRaPE-2-Pro.Q4_K_M.gguf
+      --ctx-size 65536
+    ttl: 28800
+    metadata:
+      role: user
+
+  # ── Vision Models ─────────────────────────────────────────────────────────
+  #
+  # Vision models require --mmproj (multimodal projector) and
+  # --n-gpu-layers 100,100 (format: cpu_layers,gpu_layers). The mmproj adds
+  # ~1-1.3 GB VRAM on top of the base model weight.
+  #
+  # Template families differ across VL series:
+  #   Qwen3-VL  → Qwen3.5 template family (uses --reasoning)
+  #   Qwen2-VL  → own ChatML template (no reasoning flag)
+  #   Qwen3.6   → preserve_thinking (NOT enable_thinking)
+
+  "qwen36-vision-agent":
+    name: "Qwen3.6 35B A3B Vision (Agent)"
+    cmd: >
+      ${qwen36_agent}
+      --model /opt/llama/models/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+      --mmproj /opt/llama/models/Qwen3.6-35B-A3B/mmproj-F16.gguf
+      --ctx-size 102400
+    ttl: 28800
+    metadata:
+      role: developer
+
+  "thinking-primary-vision":
+    name: "Thinking Primary Vision (Qwen3.6 27B + Vision)"
+    cmd: >
+      ${qwen36_thinking}
+      --model /opt/llama/models/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf
+      --mmproj /opt/llama/models/Qwen3.6-27B/mmproj-F16.gguf
+      --ctx-size 94208
+    ttl: 28800
+    metadata:
+      role: user
+
+  # Qwen3-VL-30B-A3B: large vision-language model (~19 GB total with mmproj).
+  # Uses Qwen3.5 template family — reasoning flag, NOT preserve_thinking.
+  "qwen3vl-30b":
+    name: "Qwen3-VL 30B A3B (Vision + Thinking)"
+    cmd: >
+      ${qwen3vl_thinking}
+      --model /opt/llama/models/Qwen3-VL-30B-A3B-Thinking/Qwen_Qwen3-VL-30B-A3B-Thinking-Q4_K_M.gguf
+      --mmproj /opt/llama/models/Qwen3-VL-30B-A3B-Thinking/mmproj-Qwen_Qwen3-VL-30B-A3B-Thinking-f16.gguf
+      --n-gpu-layers 100,100
+      --ctx-size 65536
+    ttl: 28800
+    metadata:
+      role: user
+
+  # Qwen2-VL-7B: compact vision model, comfortable VRAM fit.
+  # Uses its own ChatML template — no reasoning flag needed.
+  "qwen2vl-7b":
+    name: "Qwen2-VL 7B Instruct (Vision)"
+    cmd: >
+      ${qwen2vl_thinking}
+      --model /opt/llama/models/Qwen2-VL-7B-Instruct/Qwen2-VL-7B-Instruct-Q6_K_L.gguf
+      --mmproj /opt/llama/models/Qwen2-VL-7B-Instruct/mmproj-Qwen2-VL-7B-Instruct-f16.gguf
+      --n-gpu-layers 100,100
+      --ctx-size 65536
+    ttl: 28800
+    metadata:
+      role: user
