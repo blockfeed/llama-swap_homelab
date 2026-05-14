@@ -234,6 +234,25 @@ The first five model IDs (qwen36-agent through qwen36-plan) are aliases on a sin
 
 ---
 
+## Container Setup
+
+The `container/` directory contains a systemd-nspawn setup for isolating
+llama-swap inference tooling (benchmarking, test harnesses, custom development)
+from the host. Includes GPU passthrough (RX 7900 XTX), host filesystem bind
+mounts, and bootstrap/deploy scripts. See
+[container/README.md](container/README.md) for the architecture, setup guide,
+and troubleshooting.
+
+| File | Purpose |
+|---|---|
+| `bootstrap.sh` | First-time container provisioning (packages, users, sshd) |
+| `deploy.sh` | Deploys llama-swap config into the container |
+| `gpu.conf` | systemd tmpfiles.d entry for GPU device permissions |
+| `llama-container.nspawn` | systemd-nspawn unit definition |
+| `llama-swap-dep.conf` | Systemd service dependency wiring |
+
+---
+
 ## Operational Notes
 
 Validate config syntax before reloading:
