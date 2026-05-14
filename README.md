@@ -73,6 +73,17 @@ The Qwen3.6-35B-A3B model runs five behavioral profiles (agent, code, casual, he
 
 The server starts with thinking disabled and agent-optimized parameters. A request tagged `qwen36-chat` gets thinking enabled and temperature raised to 1.0 without the model ever unloading.
 
+The canonical entry is `qwen36-35b-a3b`; all the above are aliases. `enable_thinking` in `setParamsByID` overrides the server-level `--reasoning off` default per-request.
+
+| Alias | Thinking | Temp | Use case |
+|---|---|---|---|
+| `qwen36-agent` / `hermes-agent` | OFF | 0.7 | Tool-calling, agentic workflows |
+| `qwen36-code` / `agent-primary` | OFF | 0.6 | Precise coding |
+| `qwen36-paseo` / `paseo` | OFF | 0.7 | Casual interactive (no preserve_thinking overhead) |
+| `qwen36-chat` | ON | 1.0 | Research, ideas, heavy reasoning |
+| `qwen36-plan` | ON | 1.0 | Planning, design discussion |
+
+
 ---
 
 ## VRAM Budgeting
@@ -88,9 +99,9 @@ Two things keep the budget manageable across a wide range of models:
 | Model | Context | Approx. VRAM |
 |---|---|---|
 | Qwen3.6-35B-A3B (MoE, IQ4_XS) | 102,400 | ~20 GB |
-| Qwen3.6-35B-A3B-MTP (MoE, IQ4_NL) | 102,400 | ~22 GB |
+| Qwen3.6-35B-A3B-MTP (MoE, IQ4_NL) | 65,536 | ~22 GB |
 | Qwen3.6-27B (dense, Q4_K_XL) | 94,208 | ~22 GB |
-| Qwen3.6-27B-MTP (dense, Q4_K_M) | 94,208 | ~22 GB |
+| Qwen3.6-27B-MTP (dense, Q4_K_M) | 65,536 | ~22 GB |
 | Mistral-Small-3.2-24B (Q4_K_XL) | 92,160 | ~20 GB |
 | GLM-4.7-Flash-23B (MLA, Q4_K_XL) | 65,536 | ~15 GB |
 | Qwen3.5-9B (Q5_K_XL) | 122,880 | ~14 GB |
@@ -197,15 +208,15 @@ An additional optimization: capping the GPU's maximum shader clock (SCLK) to 230
 
 | Model ID | Architecture | Quant | Context | Role |
 |---|---|---|---|---|
-| `qwen36-agent` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | agent |
-| `qwen36-code` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | agent |
+| `qwen36-agent` / `hermes-agent` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | agent |
+| `qwen36-code` / `agent-primary` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | agent |
 | `qwen36-paseo` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | user |
 | `qwen36-chat` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | user |
 | `qwen36-plan` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | user |
-| `qwen36-35b-a3b-mtp-agent` | Qwen3.6-35B-A3B-MTP (MoE) | IQ4_NL | 102,400 | agent |
-| `qwen36-35b-a3b-mtp-chat` | Qwen3.6-35B-A3B-MTP (MoE) | IQ4_NL | 102,400 | user |
-| `qwen36-27b-mtp-agent` | Qwen3.6-27B-MTP (dense) | Q4_K_M | 94,208 | agent |
-| `qwen36-27b-mtp-reasoning` | Qwen3.6-27B-MTP (dense) | Q4_K_M | 94,208 | user |
+| `qwen36-35b-a3b-mtp-agent` | Qwen3.6-35B-A3B-MTP (MoE) | IQ4_NL | 65,536 | agent |
+| `qwen36-35b-a3b-mtp-chat` | Qwen3.6-35B-A3B-MTP (MoE) | IQ4_NL | 65,536 | user |
+| `qwen36-27b-mtp-agent` | Qwen3.6-27B-MTP (dense) | Q4_K_M | 65,536 | agent |
+| `qwen36-27b-mtp-reasoning` | Qwen3.6-27B-MTP (dense) | Q4_K_M | 65,536 | user |
 | `qwen36-27b-reasoning` | Qwen3.6-27B (dense) | Q4_K_XL | 94,208 | user |
 | `agent-mistral` | Mistral-Small-3.2-24B | Q4_K_XL | 92,160 | agent |
 | `glm47-agent` | GLM-4.7-Flash-23B (MLA) | Q4_K_XL | 65,536 | agent |

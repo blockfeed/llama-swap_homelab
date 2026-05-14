@@ -1,0 +1,28 @@
+# =============================================================================
+# systemd-nspawn Container Configuration: llama-container
+# =============================================================================
+# Purpose: Lightweight isolation for llama-swap inference tooling
+# Version: 1.0
+# Maintainer: Infrastructure Team
+#
+# This config defines an Arch Linux systemd-nspawn container that:
+#   - Boots a full systemd (Boot=yes) for service management inside
+#   - Shares llama-swap config (rw) and model files (ro) from the host
+#   - Disables virtual ethernet — uses host networking (--network-veth=no)
+#     for simplicity: SSH on port 2223 maps directly to the host IP
+#
+# Deployment:
+#   sudo cp llama-container.nspawn /etc/systemd/nspawn/llama-container.nspawn
+#   sudo machinectl enable llama-container
+#   sudo systemctl daemon-reload
+# =============================================================================
+
+[Exec]
+Boot=yes
+
+[Files]
+Bind=/etc/llama-swap:/etc/llama-swap
+Bind=/opt/llama:/opt/llama
+
+[Network]
+VirtualEthernet=no

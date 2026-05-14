@@ -106,6 +106,7 @@ macros:
   "qwen35_thinking": >
     ${base}
     --reasoning on
+    --chat-template-kwargs '{"enable_thinking":true}'
     --temp 1.0
     --top-p 0.95
     --top-k 20
@@ -327,7 +328,25 @@ models:
           chat_template_kwargs:
             enable_thinking: false
             preserve_thinking: true
+        "hermes-agent":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
         "qwen36-code":
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
+        "agent-primary":
           temperature: 0.6
           top_p: 0.95
           top_k: 20
@@ -371,6 +390,8 @@ models:
             enable_thinking: true
             preserve_thinking: true
     aliases:
+      - "hermes-agent"
+      - "agent-primary"
       - "qwen36-agent"
       - "qwen36-code"
       - "qwen36-chat"
@@ -446,7 +467,7 @@ models:
     cmd: >
       ${qwen36_mtp_agent}
       --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-IQ4_NL.gguf
-      --ctx-size 102400
+      --ctx-size 65536
     ttl: 28800
     metadata:
       role: developer
@@ -456,7 +477,7 @@ models:
     cmd: >
       ${qwen36_mtp_thinking}
       --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-IQ4_NL.gguf
-      --ctx-size 102400
+      --ctx-size 65536
     ttl: 28800
     metadata:
       role: user
@@ -468,7 +489,7 @@ models:
     cmd: >
       ${qwen36_mtp_agent}
       --model /opt/llama/models/Qwen3.6-27B-MTP/Qwen3.6-27B-Q4_K_M.gguf
-      --ctx-size 94208
+      --ctx-size 65536
     ttl: 28800
     metadata:
       role: developer
@@ -478,7 +499,7 @@ models:
     cmd: >
       ${qwen36_27b_mtp_thinking}
       --model /opt/llama/models/Qwen3.6-27B-MTP/Qwen3.6-27B-Q4_K_M.gguf
-      --ctx-size 94208
+      --ctx-size 65536
     ttl: 28800
     metadata:
       role: user

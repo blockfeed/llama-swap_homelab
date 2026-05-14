@@ -93,6 +93,7 @@ Higher temperature for exploratory reasoning. `top-k 20` constrains vocabulary t
 "qwen35_thinking": >
   ${base}
   --reasoning on
+  --chat-template-kwargs '{"enable_thinking":true}'
   --temp 1.0
   --top-p 0.95
   --top-k 20
@@ -101,7 +102,7 @@ Higher temperature for exploratory reasoning. `top-k 20` constrains vocabulary t
   --repeat-penalty 1.0
 ```
 
-`--reasoning on` is the Qwen3.5 thinking mechanism. **Do not use this on Qwen3.6 models** — they use `--reasoning on` with `preserve_thinking` instead of `enable_thinking`. Cross-applying causes thinking tokens to leak into output or disappear silently.
+`--reasoning on` with `--chat-template-kwargs '{"enable_thinking":true}'` is the Qwen3.5 thinking mechanism. **Do not use this on Qwen3.6 models** — they use `--reasoning on` with `preserve_thinking` instead of `enable_thinking`. Cross-applying causes thinking tokens to leak into output or disappear silently.
 
 ---
 
@@ -299,11 +300,13 @@ Vision models (`--mmproj`) also require `--n-gpu-layers 100,100` (format: `cpu_l
 | **Context** | 102,400 |
 | **Macro** | `qwen36_agent` (base); per-variant via `setParamsByID` |
 | **Role** | developer (agent variants) / user (thinking variants) |
+| **Upstream** | [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) |
 
 Single process serving five profiles without reload. The server launches once; `setParamsByID` injects sampling params and `chat_template_kwargs` per request.
 
 | Alias | Thinking | Temp | Presence penalty | Use case |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
+| `hermes-agent` / `agent-primary` | off | 0.7 | 1.5 | primary Hermes / opencode agent backend |
 | `qwen36-agent` | off | 0.7 | 1.5 | tool-calling, multi-turn |
 | `qwen36-code` | off | 0.6 | 0.0 | precise coding |
 | `qwen36-paseo` / `paseo` | off | 0.7 | 1.5 | casual chat (no prior-turn thinking) |
@@ -323,6 +326,7 @@ Single process serving five profiles without reload. The server launches once; `
 | **Context** | 92,160 |
 | **Macro** | `qwen36_agent` |
 | **Role** | developer |
+| **Upstream** | [mistralai/Mistral-Small-3.2-24B-Instruct-2506](https://huggingface.co/mistralai/Mistral-Small-3.2-24B-Instruct-2506) |
 
 Alternative agent backend. Good fallback for long-context tasks or when the Qwen3.6 process is occupied.
 
@@ -341,6 +345,7 @@ The `qwen36_agent` macro includes `--chat-template-kwargs` arguments that Mistra
 | **Context** | 122,880 |
 | **Macro** | `qwen35_agent` |
 | **Role** | developer |
+| **Upstream** | [Qwen/Qwen3.5-9B](https://huggingface.co/Qwen/Qwen3.5-9B) |
 
 Fastest agent backend at this VRAM footprint. Fits comfortably in 24 GB alongside almost any other model, though running two large models concurrently on this hardware isn't useful anyway.
 
@@ -357,6 +362,7 @@ Fastest agent backend at this VRAM footprint. Fits comfortably in 24 GB alongsid
 | **Context** | 65,536 |
 | **Macros** | `glm47_agent` / `glm47_thinking` |
 | **Role** | developer / user |
+| **Upstream** | [THUDM/GLM-4.7-Flash-REAP-23B-A3B](https://huggingface.co/THUDM/GLM-4.7-Flash-REAP-23B-A3B) |
 
 MLA (Multi-Linear Attention) architecture with compressed KV storage. The `--parallel 1` constraint is not optional — see macro reference above.
 
@@ -372,9 +378,10 @@ Context is halved from the native 131k because MLA's KV structure is larger per 
 |---|---|
 | **Architecture** | Qwen3.6-35B-A3B, MoE + MTP draft heads |
 | **GGUF** | UD-IQ4_NL (~18.9 GB) |
-| **Context** | 102,400 |
+| **Context** | 65,536 |
 | **Macros** | `qwen36_mtp_agent` / `qwen36_mtp_thinking` |
 | **Role** | developer / user |
+| **Upstream** | [unsloth/Qwen3.6-35B-A3B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) / [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) |
 
 MTP variant of the 35B-A3B. Same architecture and weights as the non-MTP model, with additional draft head layers baked into the GGUF enabling speculative decoding without a separate draft model.
 
@@ -402,7 +409,7 @@ Thinking mode is faster (+5%) because reasoning tokens are more predictable — 
 
 All parameters match upstream recommendations exactly.
 
-**VRAM estimate:** ~18.9 GB weights (IQ4_NL, slightly heavier than IQ4_XS) + KV cache ≈ ~22 GB at 102k context. Monitor with `rocm-smi --showmeminfo vram` after first inference.
+**VRAM estimate:** ~18.9 GB weights (IQ4_NL, slightly heavier than IQ4_XS) + KV cache ≈ ~20 GB at 65k context. Reduced from 102k to 65k for VRAM headroom. Monitor with `rocm-smi --showmeminfo vram` after first inference.
 
 ---
 
@@ -412,9 +419,10 @@ All parameters match upstream recommendations exactly.
 |---|---|
 | **Architecture** | Qwen3.6-27B, dense + MTP draft heads |
 | **GGUF** | Q4_K_M (~15.7 GB) |
-| **Context** | 94,208 |
+| **Context** | 65,536 |
 | **Macros** | `qwen36_mtp_agent` / `qwen36_27b_mtp_thinking` |
 | **Role** | developer / user |
+| **Upstream** | [unsloth/Qwen3.6-27B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-MTP-GGUF) / [Qwen/Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B) |
 
 Dense (non-MoE) MTP model. All 27B parameters activate per token — more compute per step than the sparse MoE variants. MTP partially offsets this with speculative throughput gains.
 
@@ -441,7 +449,7 @@ Thinking mode is faster than agent (+17%) — larger MTP speedup than the 35B-A3
 | temperature (agent) | 0.7 | 0.7 |
 | presence_penalty (agent) | 1.5 | 1.5 |
 
-**VRAM estimate:** ~15.7 GB weights + KV cache ≈ ~22 GB at 94k context. Dense 27B is near the VRAM ceiling — verify with `rocm-smi --showmeminfo vram` after the first request.
+**VRAM estimate:** ~15.7 GB weights + KV cache ≈ ~19 GB at 65k context. Reduced from 94k to 65k for VRAM headroom. Dense 27B is compute-heavy — verify with `rocm-smi --showmeminfo vram` after the first request.
 
 ---
 
@@ -454,6 +462,7 @@ Thinking mode is faster than agent (+17%) — larger MTP speedup than the 35B-A3
 | **Context** | 94,208 |
 | **Macro** | `qwen36_thinking` |
 | **Role** | user |
+| **Upstream** | [Qwen/Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B) |
 
 Non-MTP dense 27B. Higher-quality quantization (Q4_K_XL vs Q4_K_M in the MTP variant) at slightly more VRAM. Use when output quality matters more than throughput, or when the MTP binary isn't available.
 
@@ -470,6 +479,7 @@ Non-MTP dense 27B. Higher-quality quantization (Q4_K_XL vs Q4_K_M in the MTP var
 | **Context** | 90,112 |
 | **Macro** | `qwen35_thinking` |
 | **Role** | user |
+| **Upstream** | [Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated](https://huggingface.co/bartowski/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated-GGUF) / [Qwen/Qwen3.5-27B](https://huggingface.co/Qwen/Qwen3.5-27B) |
 
 Abliteration removes refusal vectors from the model's activation space. **Reduced epistemic honesty** — the model may produce confident output where the base model would hedge or decline. Not for agent/infrastructure tasks; interactive sessions only.
 
@@ -486,6 +496,7 @@ Uses Qwen3.5 Jinja template (`enable_thinking`), not Qwen3.6 (`preserve_thinking
 | **Context** | 16,384 |
 | **Macro** | `rocinante_general` |
 | **Role** | user |
+| **Upstream** | [TheDrummer/Rocinante-X-12B-v1](https://huggingface.co/TheDrummer/Rocinante-X-12B-v1) |
 
 Q8_0 quantization for maximum quality at this model size. Short context (16k) saves VRAM; voice and casual sessions rarely need more. Uses Mistral v3 Tekken tokenizer — system prompts should be injected as user/assistant pairs, not as Nemo-style `[SYSTEM_PROMPT]` blocks.
 
@@ -502,6 +513,7 @@ Q8_0 quantization for maximum quality at this model size. Short context (16k) sa
 | **Context** | 65,536 |
 | **Macro** | `grape2_thinking` |
 | **Role** | user |
+| **Upstream** | [SL-AI/GRaPE-2-Pro](https://huggingface.co/SL-AI/GRaPE-2-Pro) |
 
 Uses custom `<thinking_mode>` prompt tags instead of the standard `enable_thinking` flag. Reasoning depth is controlled at prompt time:
 
@@ -540,8 +552,9 @@ Template note: Qwen3-VL uses the Qwen3.5 template family (`enable_thinking`). Qw
 | Scenario | Approx. VRAM | Status |
 |---|---|---|
 | 35B-A3B (non-MTP, IQ4_XS, 102k ctx) | ~20 GB | ✅ comfortable |
-| 35B-A3B-MTP (IQ4_NL, 102k ctx) | ~22 GB | ✅ within ceiling |
-| 27B dense (MTP or non-MTP, 94k ctx) | ~22–23 GB | ⚠ near ceiling — monitor |
+| 35B-A3B-MTP (IQ4_NL, 65k ctx) | ~20 GB | ✅ within ceiling |
+| 27B dense non-MTP (Q4_K_XL, 94k ctx) | ~22–23 GB | ⚠ near ceiling — monitor |
+| 27B dense MTP (Q4_K_M, 65k ctx) | ~19 GB | ✅ good headroom |
 | Mistral-3.2-24B (Q4_K_XL, 92k ctx) | ~20.5 GB | ✅ comfortable |
 | GLM-4.7-Flash-23B (Q4_K_XL, 65k ctx) | ~15 GB | ✅ headroom for second model |
 | Qwen3.5-9B (Q5_K_XL, 122k ctx) | ~14 GB | ✅ most VRAM-efficient |
