@@ -372,20 +372,30 @@ Context is halved from the native 131k because MLA's KV structure is larger per 
 
 ---
 
-### qwen36-35b-a3b-mtp-agent / qwen36-35b-a3b-mtp-chat
+### qwen36-35b-a3b-mtp (multi-variant)
 
 | | |
 |---|---|
 | **Architecture** | Qwen3.6-35B-A3B, MoE + MTP draft heads |
 | **GGUF** | UD-IQ4_NL (~18.9 GB) |
 | **Context** | 65,536 |
-| **Macros** | `qwen36_mtp_agent` / `qwen36_mtp_thinking` |
-| **Role** | developer / user |
+| **Macro** | `qwen36_mtp_agent` (base); per-variant via `setParamsByID` |
+| **Role** | developer (agent variants) / user (thinking variants) |
 | **Upstream** | [unsloth/Qwen3.6-35B-A3B-MTP-GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) / [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) |
 
 MTP variant of the 35B-A3B. Same architecture and weights as the non-MTP model, with additional draft head layers baked into the GGUF enabling speculative decoding without a separate draft model.
 
+Single process serving five profiles without reload. The server launches once with `qwen36_mtp_agent` defaults; `setParamsByID` injects sampling params and `chat_template_kwargs` per request. Avoids the ~5.5 s reload on each variant switch.
+
 MTP requires the [am17an/mtp-clean](https://github.com/am17an/llama.cpp/tree/mtp-clean) llama-server build. See [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673) for the implementation. The standard llama.cpp binary does not support `--spec-type mtp`.
+
+| Alias | Thinking | Temp | Presence penalty | Use case |
+|---|---|---|---|---|
+| `qwen36-agent` / `hermes-agent` | off | 0.7 | 1.5 | tool-calling, multi-turn |
+| `qwen36-code` / `agent-primary` | off | 0.6 | 0.0 | precise coding |
+| `qwen36-paseo` / `paseo` | off | 0.7 | 1.5 | casual chat (no prior-turn thinking) |
+| `qwen36-chat` | on | 1.0 | 1.5 | heavy reasoning, research |
+| `qwen36-plan` | on | 1.0 | 1.5 | planning, design discussion |
 
 **Measured throughput (warm model, 200-token generation, RX 7900 XTX):**
 
@@ -537,6 +547,7 @@ The tag goes at the **end** of the user message. Putting it in the system prompt
 | Model ID | Base model | Quant | mmproj | Context | Notes |
 |---|---|---|---|---|---|
 | `qwen36-vision-agent` | Qwen3.6-35B-A3B | IQ4_XS | F16 | 102,400 | agent mode + vision |
+| `agent-primary-vision` | Qwen3.6-35B-A3B | IQ4_XS | F16 | 102,400 | agent mode + vision |
 | `thinking-primary-vision` | Qwen3.6-27B | Q4_K_XL | F16 | 94,208 | thinking + vision |
 | `qwen3vl-30b` | Qwen3-VL-30B-A3B-Thinking | Q4_K_M | f16 | 65,536 | ~19 GB total |
 | `qwen2vl-7b` | Qwen2-VL-7B-Instruct | Q6_K_L | f16 | 65,536 | compact, ~7.4 GB |
