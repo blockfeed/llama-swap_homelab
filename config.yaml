@@ -456,34 +456,132 @@ models:
   #      https://github.com/blockfeed/llama-cpp-mtp-hip (Arch package)
   #
   # Hard constraints: --parallel 1 only; --mmproj not supported with MTP.
+  # --cache-ram 0 required: MTP draft heads use llama_memory_recurrent, which
+  # aborts on state_write during LRU slot eviction (prompt_save ->
+  # llama_state_seq_get_size_ext). --cache-ram 0 nulls the server-side
+  # prompt_cache unique_ptr, preventing prompt_save from ever being called.
   #
-  # To revert: remove these 4 entries and the 3 qwen36_mtp_*/qwen36_27b_mtp_*
+  # To revert: remove these entries and the 3 qwen36_mtp_*/qwen36_27b_mtp_*
   # macros above. The patched binary is fully compatible with non-MTP models.
 
+  # --- Qwen3.6-35B-A3B-MTP: Primary MTP multi-variant model ---
+  #
+  # Single llama-server process serving five behavioral profiles via
+  # setParamsByID. The server launches once with qwen36_mtp_agent defaults;
+  # setParamsByID rewrites sampling parameters and template kwargs per-request
+  # without restarting. Avoids the ~5.5 s reload on each variant switch.
+  #
   # GGUF: Qwen3.6-35B-A3B-UD-IQ4_NL (~18.9 GB). IQ4_NL vs IQ4_XS: slightly
   # heavier quant, marginally better quality at comparable VRAM cost.
-  "qwen36-35b-a3b-mtp-agent":
-    name: "Qwen3.6 35B A3B MTP (Agent)"
+  #
+  # Variants:
+  #   qwen36-agent / hermes-agent  — agent/tool-calling, reasoning off, temp=0.7
+  #   qwen36-code  / agent-primary — precise coding,     reasoning off, temp=0.6
+  #   qwen36-paseo / paseo         — casual chat,        reasoning off, temp=0.7
+  #   qwen36-chat                  — thinking mode,      reasoning on,  temp=1.0
+  #   qwen36-plan                  — planning/research,  reasoning on,  temp=1.0
+  "qwen36-35b-a3b-mtp":
+    name: "Qwen3.6 35B A3B MTP"
     cmd: >
       ${qwen36_mtp_agent}
       --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-IQ4_NL.gguf
       --ctx-size 65536
+      -b 512
+      -ub 512
     ttl: 28800
     metadata:
       role: developer
+    filters:
+      setParams:
+        chat_template_kwargs:
+          enable_thinking: false
+          preserve_thinking: true
+      setParamsByID:
+        "qwen36-agent":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
+        "hermes-agent":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
+        "qwen36-code":
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
+        "agent-primary":
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          chat_template_kwargs:
+            enable_thinking: false
+            preserve_thinking: true
+        "qwen36-paseo":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+        "paseo":
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: false
+        "qwen36-chat":
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+        "qwen36-plan":
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+    aliases:
+      - "hermes-agent"
+      - "agent-primary"
+      - "qwen36-agent"
+      - "qwen36-code"
+      - "qwen36-chat"
+      - "qwen36-plan"
+      - "qwen36-paseo"
+      - "paseo"
 
-  "qwen36-35b-a3b-mtp-chat":
-    name: "Qwen3.6 35B A3B MTP (Thinking)"
-    cmd: >
-      ${qwen36_mtp_thinking}
-      --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-IQ4_NL.gguf
-      --ctx-size 65536
-    ttl: 28800
-    metadata:
-      role: user
-
+  # --- Qwen3.6-27B-MTP: Dense MTP model (separate GGUF, separate params) ---
+  #
   # GGUF: Qwen3.6-27B-Q4_K_M (~15.7 GB). Dense model — all 27B params active
   # per token, so it's slower than the MoE variant despite fewer total params.
+  # presence_penalty=0.0 per Unsloth Qwen3.6-27B-MTP docs (differs from 35B-A3B's 1.5).
   "qwen36-27b-mtp-agent":
     name: "Qwen3.6 27B MTP (Agent)"
     cmd: >
@@ -510,7 +608,7 @@ models:
   # for deep reasoning sessions where MoE sparsity may miss subtle activations.
   # GGUF: UD-Q4_K_XL (~17 GB). At the VRAM ceiling — monitor after loading.
   "qwen36-27b-reasoning":
-    name: "Qwen3.6 27B (Reasoning)"
+    name: "Qwen3.6 27B (Deep Thinking)"
     cmd: >
       ${qwen36_thinking}
       --model /opt/llama/models/Qwen3.6-27B/Qwen3.6-27B-UD-Q4_K_XL.gguf
@@ -525,7 +623,7 @@ models:
     name: "Qwen3.5 27B Abliterated (Thinking)"
     cmd: >
       ${qwen35_thinking}
-      --model /opt/llama/models/Qwen3.5-27B-abliterated/Qwen3.5-27B-Abliterated.Q4_K_M.gguf
+      --model /opt/llama/models/Qwen3.5-27B-abliterated/Huihui-Qwen3.5-27B-Claude-4.6-Opus-abliterated.Q4_K_M.gguf
       --ctx-size 90112
     ttl: 28800
     metadata:
@@ -586,6 +684,18 @@ models:
     ttl: 28800
     metadata:
       role: user
+
+  # Agent primary with vision capability (Qwen3.6-35B-A3B + mmproj)
+  "agent-primary-vision":
+    name: "Agent Primary Vision (Qwen3.6 35B A3B + Vision)"
+    cmd: >
+      ${qwen36_agent}
+      --model /opt/llama/models/Qwen3.6-35B-A3B/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+      --mmproj /opt/llama/models/Qwen3.6-35B-A3B/mmproj-F16.gguf
+      --ctx-size 102400
+    ttl: 28800
+    metadata:
+      role: developer
 
   # Qwen3-VL-30B-A3B: large vision-language model (~19 GB total with mmproj).
   # Uses Qwen3.5 template family — reasoning flag, NOT preserve_thinking.

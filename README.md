@@ -82,6 +82,7 @@ The canonical entry is `qwen36-35b-a3b`; all the above are aliases. `enable_thin
 | `qwen36-paseo` / `paseo` | OFF | 0.7 | Casual interactive (no preserve_thinking overhead) |
 | `qwen36-chat` | ON | 1.0 | Research, ideas, heavy reasoning |
 | `qwen36-plan` | ON | 1.0 | Planning, design discussion |
+| `qwen36-35b-a3b-mtp-*` / `hermes-agent` / `agent-primary` / `qwen36-agent` / `qwen36-code` / `qwen36-chat` / `qwen36-plan` / `qwen36-paseo` / `paseo` | OFF→ON | 0.6–1.0 | Same aliases via `setParamsByID` (single MTP process) |
 
 
 ---
@@ -213,8 +214,7 @@ An additional optimization: capping the GPU's maximum shader clock (SCLK) to 230
 | `qwen36-paseo` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | user |
 | `qwen36-chat` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | user |
 | `qwen36-plan` | Qwen3.6-35B-A3B (MoE) | IQ4_XS | 102,400 | user |
-| `qwen36-35b-a3b-mtp-agent` | Qwen3.6-35B-A3B-MTP (MoE) | IQ4_NL | 65,536 | agent |
-| `qwen36-35b-a3b-mtp-chat` | Qwen3.6-35B-A3B-MTP (MoE) | IQ4_NL | 65,536 | user |
+| `qwen36-35b-a3b-mtp-*` | Qwen3.6-35B-A3B-MTP (MoE) | IQ4_NL | 65,536 | agent/user |
 | `qwen36-27b-mtp-agent` | Qwen3.6-27B-MTP (dense) | Q4_K_M | 65,536 | agent |
 | `qwen36-27b-mtp-reasoning` | Qwen3.6-27B-MTP (dense) | Q4_K_M | 65,536 | user |
 | `qwen36-27b-reasoning` | Qwen3.6-27B (dense) | Q4_K_XL | 94,208 | user |
@@ -227,10 +227,11 @@ An additional optimization: capping the GPU's maximum shader clock (SCLK) to 230
 | `grape2-thinking` | GRaPE-2-Pro (Qwen3.5 base) | Q4_K_M | 65,536 | user |
 | `qwen36-vision-agent` | Qwen3.6-35B-A3B + mmproj | IQ4_XS | 102,400 | agent |
 | `thinking-primary-vision` | Qwen3.6-27B + mmproj | Q4_K_XL | 94,208 | user |
+| `agent-primary-vision` | Qwen3.6-35B-A3B + mmproj | IQ4_XS | 102,400 | agent |
 | `qwen3vl-30b` | Qwen3-VL-30B-A3B | Q4_K_M | 65,536 | user |
 | `qwen2vl-7b` | Qwen2-VL-7B | Q6_K_L | 65,536 | user |
 
-The first five model IDs (qwen36-agent through qwen36-plan) are aliases on a single llama-server process via `setParamsByID`. The rest are independent processes that evict each other from VRAM on demand.
+The first five model IDs (qwen36-agent through qwen36-plan) are aliases on a single llama-server process via `setParamsByID`. The `qwen36-35b-a3b-mtp-*` entries share the same mechanism — the MTP model runs on a single process with the same set of aliases, each getting different sampling parameters injected per-request. The rest are independent processes that evict each other from VRAM on demand.
 
 ---
 
