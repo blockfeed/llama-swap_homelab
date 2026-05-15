@@ -253,6 +253,30 @@ and troubleshooting.
 
 ---
 
+## Known Issues
+
+### MTP crash under concurrent requests: `recurrent state read/write is not supported with partial rollback`
+
+**Affects:** All MTP models (`Qwen3.6-35B-A3B-MTP`, `Qwen3.6-27B-MTP`)
+
+**Symptom:** llama-server aborts mid-generation when a second request arrives while an MTP model is actively processing a prompt.
+
+**Root cause:** The [am17an/mtp-clean](https://github.com/am17an/mtp-clean) branch implements MTP draft heads using `llama_memory_recurrent`. When a concurrent request triggers `server_slot::prompt_save` (for KV prefix reuse), it hits `llama_memory_recurrent::state_write`, which unconditionally aborts:
+
+```
+GGML_ABORT("recurrent state read/write is not supported with partial rollback");
+```
+
+The recurrent memory used for draft heads cannot be serialized. This is a missing feature in the upstream MTP branch, not a build or configuration problem.
+
+**Fix:** Add `--no-cache-prompt` to both MTP model definitions in `config.yaml`. This prevents the server from ever calling `prompt_save`.
+
+**Trade-off:** Disabling prompt caching means repeated requests with the same system prompt or prefix won't get KV reuse across turns. Given `--parallel 1` and MTP's throughput advantage (~1.5–2x from speculative decoding), this is the correct trade-off.
+
+**Upstream tracking:** The bug lives in `llama_memory_recurrent::state_write` in the [am17an/mtp-clean](https://github.com/am17an/mtp-clean) branch. Watch that repo for a fix if you want to re-enable prompt caching.
+
+---
+
 ## Operational Notes
 
 Validate config syntax before reloading:
