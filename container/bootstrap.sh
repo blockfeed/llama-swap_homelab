@@ -15,17 +15,15 @@
 #
 # What it does:
 #   1. Checks prerequisites (root, pacstrap, existing container)
-#   2. Pacstraps base + openssh packages into /var/lib/machines/llama-container
+#   2. Pacstraps base + openssh + python-huggingface-hub into /var/lib/machines/llama-container
 #   3. Enables sshd inside the container
 #   4. Configures SSH port 2223 in the container's sshd_config
-#   5. Reports post-bootstrap steps (GPU group config)
+#   5. Creates user and GPU render group inside the container
+#   6. Injects host SSH public key for passwordless access
+#   7. Reports post-bootstrap steps (deploy configs, start container)
 #
-# Post-bootstrap steps (manual, inside container):
-#   systemd-nspawn -D /var/lib/machines/llama-container
-#   groupadd --force --gid 993 render
-#   usermod -aG render <your-ssh-user>
-#   passwd <your-ssh-user>
-#   exit
+# No manual post-bootstrap steps required — user and SSH key are set up
+# automatically. After bootstrap, run deploy.sh then start the container.
 #
 # See also:
 #   deploy.sh  — Deploy configs to system locations (run after bootstrap)
@@ -38,6 +36,10 @@ CONTAINER_NAME="llama-container"
 ROOTFS="/var/lib/machines/${CONTAINER_NAME}"
 GPU_GID="993"
 GPU_GROUP="render"
+CONTAINER_USER="<user>"
+CONTAINER_UID="1000"
+# SSH public key for the container user
+SSH_AUTHORIZED_KEY="<ssh_public_key>"
 
 # --- Color helpers ---
 RED='\033[0;31m'
@@ -102,6 +104,23 @@ else
     warn "sshd_config not found at ${SSHD_CONFIG}. Check pacstrap output."
 fi
 
+# --- Create user and GPU group, inject SSH key ---
+info "Creating render group (GID ${GPU_GID}) inside container..."
+systemd-nspawn -D "${ROOTFS}" groupadd --force --gid ${GPU_GID} ${GPU_GROUP}
+
+info "Creating user '${CONTAINER_USER}' (UID ${CONTAINER_UID}) inside container..."
+systemd-nspawn -D "${ROOTFS}" useradd -m -u ${CONTAINER_UID} -G ${GPU_GROUP} ${CONTAINER_USER}
+info "User '${CONTAINER_USER}' created and added to '${GPU_GROUP}' group."
+
+info "Installing SSH authorized key for ${CONTAINER_USER}..."
+USER_SSH_DIR="${ROOTFS}/home/${CONTAINER_USER}/.ssh"
+mkdir -p "${USER_SSH_DIR}"
+echo "${SSH_AUTHORIZED_KEY}" > "${USER_SSH_DIR}/authorized_keys"
+chmod 700 "${USER_SSH_DIR}"
+chmod 600 "${USER_SSH_DIR}/authorized_keys"
+chown -R ${CONTAINER_UID}:${CONTAINER_UID} "${USER_SSH_DIR}"
+info "SSH key installed."
+
 # --- Done ---
 echo ""
 info "================================================================"
@@ -115,21 +134,12 @@ echo ""
 echo "  1. Deploy configuration files:"
 echo "     sudo ./deploy.sh"
 echo ""
-echo "  2. Enter the container to set up users and GPU access:"
-echo "     sudo systemd-nspawn -D ${ROOTFS}"
-echo ""
-echo "  3. Inside the container:"
-echo "     groupadd --force --gid ${GPU_GID} ${GPU_GROUP}"
-echo "     useradd -m -G ${GPU_GROUP} <your-ssh-user>"
-echo "     passwd <your-ssh-user>"
-echo "     exit"
-echo ""
-echo "  4. Start the container:"
+echo "  2. Start the container:"
 echo "     sudo machinectl start ${CONTAINER_NAME}"
 echo ""
-echo "  5. Verify:"
+echo "  3. Verify:"
 echo "     sudo machinectl list"
-echo "     ssh -p 2223 <your-ssh-user>@<host-ip>"
+echo "     ssh -p 2223 ${CONTAINER_USER}@<host-ip>"
 echo ""
-info "GPU device GID on this host: ${GPU_GID} (group '${GPU_GROUP}')"
-info "The container user must be in the '${GPU_GROUP}' group with GID ${GPU_GID}."
+info "User '${CONTAINER_USER}' is already configured with SSH key access."
+info "GPU render group (GID ${GPU_GID}) is set up."
