@@ -14,7 +14,7 @@ These apply globally.
 
 **KV cache quantization.** All models use `--cache-type-k q4_0 --cache-type-v q4_0` via the `${base}` macro. This halves KV cache VRAM versus fp16. At 100k context the KV cache in fp16 would be 10–12 GB; q4_0 brings it under 4 GB. Quality impact is negligible for conversational contexts.
 
-**Macro nesting.** llama-swap silently ignores `--ctx-size` when it appears in a macro that references another macro. All macros here expand `${base}` exactly one level deep. Context size always goes in the model entry. Exception: `gemma4_mtp` is self-contained and references no other macro — required because it uses a different binary from the system llama-server.
+**Macro nesting.** llama-swap silently ignores `--ctx-size` when it appears in a macro that references another macro. All macros here expand `${base}` exactly one level deep. Context size always goes in the model entry. Exception: `gemma4_mtp` is self-contained and references no other macro — kept standalone because it carries a distinct full set of MTP flags and Gemma 4-specific sampling defaults.
 
 **Flash Attention.** `--flash-attn on` requires the literal string `on`, not a boolean flag. Using `--flash-attn` alone without a value has no effect.
 
@@ -111,7 +111,7 @@ Parameters match Unsloth Qwen3.6 non-thinking general task recommendations.
 
 ```yaml
 "gemma4_mtp": >
-  /opt/llama.cpp-gemma4-mtp/bin/llama-server
+  /usr/bin/llama-server
   --port ${PORT}
   --n-gpu-layers 999
   --cache-type-k q4_0
@@ -131,9 +131,7 @@ Parameters match Unsloth Qwen3.6 non-thinking general task recommendations.
   --chat-template-kwargs '{"enable_thinking":false}'
 ```
 
-This macro is **self-contained** — it does not reference `${base}`. Required because Gemma 4 MTP needs a separate binary at `/opt/llama.cpp-gemma4-mtp/bin/llama-server` (PR [#23398](https://github.com/ggml-org/llama.cpp/pull/23398) not yet mainline). Referencing `${base}` would pull in the system llama-server path, which does not yet support Gemma 4 MTP.
-
-Gemma 4 MTP support is in [llama.cpp PR #23398](https://github.com/ggml-org/llama.cpp/pull/23398). Until it merges and ships in the Arch package, the separate fork at [blockfeed/llama.cpp-hip-gemma4-mtp](https://github.com/blockfeed/llama.cpp-hip-gemma4-mtp) is required.
+This macro is **self-contained** — it does not reference `${base}`. Kept standalone because it requires a complete set of MTP flags and Gemma 4-specific defaults (temp 1.0, top-k 64, `enable_thinking`) that differ structurally from `${base}`. PR #23398 merged into mainline; all models now use the standard `/usr/bin/llama-server`.
 
 | Parameter | Why |
 |---|---|
@@ -225,9 +223,7 @@ Thinking mode runs slightly faster (+3–5%) because reasoning tokens are more p
 | **Role** | developer |
 | **Upstream** | [unsloth/gemma-4-26B-A4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF) |
 
-External-drafter MTP: draft heads live in a separate GGUF (`--model-draft`) rather than being embedded in the main model. This differs from Qwen3.6-35B-A3B-MTP where draft heads are baked into a single file.
-
-Requires the blockfeed-forked binary at `/opt/llama.cpp-gemma4-mtp/bin/llama-server` (see [blockfeed/llama.cpp-hip-gemma4-mtp](https://github.com/blockfeed/llama.cpp-hip-gemma4-mtp)). The binary is kept separate from the system llama-server to avoid displacing it for models that don't need the Gemma 4 patch. Gemma 4 MTP support is tracked in [llama.cpp PR #23398](https://github.com/ggml-org/llama.cpp/pull/23398).
+External-drafter MTP: draft heads live in a separate GGUF (`--model-draft`) rather than being embedded in the main model. This differs from Qwen3.6-35B-A3B-MTP where draft heads are baked into a single file. PR #23398 merged into mainline — runs on the standard system llama-server.
 
 Template: Gemma 4 uses `enable_thinking` only. No `--reasoning` flag, no `preserve_thinking`. Thinking is controlled via `setParamsByID` per alias.
 

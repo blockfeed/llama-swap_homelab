@@ -2,9 +2,7 @@
 
 Configuration for a multi-model LLM inference server on a single consumer GPU — five model families (instruct, thinking, vision, agent) over a local OpenAI-compatible API, built on [llama-swap](https://github.com/mostlygeek/llama-swap). The intent is to document one practical approach: an AMD Radeon RX 7900 XTX, 24 GB of VRAM, models tuned to fit within it one at a time without latency from reloads.
 
-All primary inference models use MTP (Multi-Token Prediction) speculative decoding where supported. That meant working through KV cache quantization, context sizing methodology, and the constraints of two different MTP implementations — Qwen3.6 uses internal draft heads with the standard llama-server (MTP is mainline since b9180); Gemma 4 uses an external draft model and requires a separate fork until [llama.cpp PR #23398](https://github.com/ggml-org/llama.cpp/pull/23398) lands.
-
-Gemma 4 MTP requires a custom binary at [blockfeed/llama.cpp-hip-gemma4-mtp](https://github.com/blockfeed/llama.cpp-hip-gemma4-mtp). Everything else runs on the standard system llama-server.
+All primary inference models use MTP (Multi-Token Prediction) speculative decoding where supported. That meant working through KV cache quantization, context sizing methodology, and the constraints of two different MTP implementations — Qwen3.6 uses internal draft heads baked into the GGUF (MTP mainline since b9180); Gemma 4 uses an external draft model (PR #23398 merged into mainline). Both run on the standard system llama-server.
 
 ---
 
@@ -15,8 +13,7 @@ Gemma 4 MTP requires a custom binary at [blockfeed/llama.cpp-hip-gemma4-mtp](htt
 | GPU | AMD Radeon RX 7900 XTX (RDNA3, gfx1100) |
 | VRAM | 24 GB GDDR6 |
 | Compute | ROCm 7.2.1, HIP backend |
-| llama.cpp (system) | Standard build, MTP mainline since b9180; `/usr/bin/llama-server` |
-| llama.cpp (Gemma 4) | Gemma4-MTP fork; `/opt/llama.cpp-gemma4-mtp/bin/llama-server` — [blockfeed/llama.cpp-hip-gemma4-mtp](https://github.com/blockfeed/llama.cpp-hip-gemma4-mtp) |
+| llama.cpp | Standard build; all models use `/usr/bin/llama-server` |
 | Orchestrator | [llama-swap](https://github.com/mostlygeek/llama-swap) |
 | OS | Arch Linux, Zen kernel |
 
@@ -148,14 +145,14 @@ All primary inference models use MTP where the architecture supports it:
 | Model | MTP type | Notes |
 |---|---|---|
 | `qwen36-35b-a3b-mtp` | Internal heads | Draft heads embedded in GGUF; system binary |
-| `gemma4-26b-a4b-mtp` | External drafter | Separate `--model-draft` GGUF; custom binary (PR [#23398](https://github.com/ggml-org/llama.cpp/pull/23398)) |
+| `gemma4-26b-a4b-mtp` | External drafter | Separate `--model-draft` GGUF; system binary (PR #23398 merged) |
 | `qwen36-35b-a3b-vision` | None | `--mmproj` incompatible with `--spec-type draft-mtp` |
 | `rocinante-x-12b` | None | Standard single-token inference |
 | `huihui-35b-abliterated` | None | Standard single-token inference |
 
 **Internal heads (Qwen3.6-35B-A3B-MTP):** Draft heads are embedded in the main GGUF. No second model file needed. Runs on the standard system llama-server — MTP is mainline since b9180.
 
-**External drafter (Gemma 4 26B-A4B-MTP):** Draft heads are in a separate GGUF. Both `--model` and `--model-draft` are required. Requires the Gemma 4 fork from [blockfeed/llama.cpp-hip-gemma4-mtp](https://github.com/blockfeed/llama.cpp-hip-gemma4-mtp) — Gemma 4 MTP support is in [PR #23398](https://github.com/ggml-org/llama.cpp/pull/23398) and not yet merged into a standard Arch package. The binary lives at `/opt/llama.cpp-gemma4-mtp/bin/llama-server` to isolate it from the system binary.
+**External drafter (Gemma 4 26B-A4B-MTP):** Draft heads are in a separate GGUF. Both `--model` and `--model-draft` are required. Runs on the standard system llama-server — Gemma 4 MTP support landed in PR #23398 and is now in mainline.
 
 Required flags for both patterns:
 ```

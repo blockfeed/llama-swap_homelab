@@ -60,7 +60,7 @@ macros:
     --spec-draft-n-max 2
 
   "gemma4_mtp": >
-    /opt/llama.cpp-gemma4-mtp/bin/llama-server
+    /usr/bin/llama-server
     --port ${PORT}
     --n-gpu-layers 999
     --cache-type-k q4_0
