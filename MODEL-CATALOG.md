@@ -142,6 +142,52 @@ This macro is **self-contained** — it does not reference `${base}`. Kept stand
 
 ---
 
+### `gemma4_12b_mtp` — Gemma 4 12B MTP (external drafter)
+
+```yaml
+"gemma4_12b_mtp": >
+  /usr/bin/llama-server
+  --port ${PORT}
+  --n-gpu-layers 999
+  --cache-type-k q4_0
+  --cache-type-v q4_0
+  --host 0.0.0.0
+  --jinja
+  --flash-attn on
+  --parallel 1
+  --cache-ram 0
+  --temp 1.0
+  --top-p 0.95
+  --top-k 64
+  -b 512
+  -ub 512
+  --spec-type draft-mtp
+  --spec-draft-n-max 4
+  --chat-template-kwargs '{"enable_thinking":false}'
+```
+
+Self-contained like `gemma4_mtp`. Differs only in `--spec-draft-n-max 4` (vs 3 for the 26B model) — the 12B QAT drafter is more accepting at higher n-max.
+
+---
+
+### `glm47_flash` — GLM-4.7 Flash
+
+```yaml
+"glm47_flash": >
+  ${base}
+  --chat-template-kwargs '{"enable_thinking":false}'
+  --temp 1.0
+  --top-p 0.95
+  --min-p 0.01
+  --repeat-penalty 1.0
+  -b 512
+  -ub 512
+```
+
+References `${base}`. `enable_thinking: false` default; `setParamsByID` overrides per alias. `repeat-penalty 1.0` (neutral — GLM-4.7 Flash is not prone to repetition). `min-p 0.01` follows ZhipuAI's published sampling recommendations.
+
+---
+
 ### `rocinante_general` — Rocinante-X-12B
 
 ```yaml
@@ -178,7 +224,7 @@ Vision models (`--mmproj`) require `--n-gpu-layers 100,100` and cannot be used w
 | | |
 |---|---|
 | **Architecture** | Qwen3.6-35B-A3B, MoE (128 experts, 3 activated ≈ 3.5B active params) + internal MTP draft heads |
-| **GGUF** | Qwen3.6-35B-A3B-UD-IQ4_NL.gguf (~18.9 GB) |
+| **GGUF** | Qwen3.6-35B-A3B-UD-Q4_K_S.gguf |
 | **Context** | 262,144 |
 | **Macro** | `qwen36_mtp_agent`; per-alias via `setParamsByID` |
 | **Role** | developer |
@@ -207,7 +253,7 @@ Single process serving two profiles without reload. `setParamsByID` injects samp
 
 Thinking mode runs slightly faster (+3–5%) because reasoning tokens are more predictable — draft heads achieve higher acceptance rates on chain-of-thought output than on direct answers.
 
-**VRAM estimate:** ~18.9 GB weights (IQ4_NL) + ~2 GB KV cache at 262k context (q4_0) ≈ 21.6 GB (~88%). Within the 93% ceiling with headroom.
+**VRAM estimate:** Verify with `rocm-smi --showmeminfo vram` after first inference. Q4_K_S is a standard k-quant; weight size depends on the specific quantization output — check against the 93% ceiling after load.
 
 ---
 
@@ -271,7 +317,7 @@ Uses Mistral v3 Tekken tokenizer — system prompts should be injected as user/a
 | | |
 |---|---|
 | **Architecture** | Qwen3.6-35B-A3B (MoE) + multimodal projector |
-| **GGUF** | Qwen3.6-35B-A3B-UD-IQ4_XS.gguf (~17.5 GB) |
+| **GGUF** | Qwen3.6-35B-A3B-UD-IQ4_NL_XL.gguf |
 | **mmproj** | mmproj-F16.gguf (~1.3 GB) |
 | **Context** | 262,144 |
 | **Macro** | `qwen36_agent`; per-alias via `setParamsByID` |
@@ -285,10 +331,9 @@ MTP is not applicable: `--mmproj` is incompatible with `--spec-type draft-mtp`. 
 | Alias | Thinking | Temp | Use case |
 |---|---|---|---|
 | `qwen36-35b-a3b-vision` | OFF | 0.7 | Base entry |
-| `agent-primary-vision` | OFF | 0.7 | Agent/tool-calling with image understanding |
-| `qwen36-chat-vision` | ON | 1.0 | Visual reasoning, document analysis |
+| `qwen36-vision` | ON | 1.0 | Visual reasoning, document analysis |
 
-**VRAM estimate:** ~17.5 GB weights + ~1.3 GB mmproj + ~2 GB KV at 262k context ≈ 22 GB (~90%). Monitor after first inference.
+**VRAM estimate:** IQ4_NL_XL is heavier than IQ4_XS — verify with `rocm-smi --showmeminfo vram` after first inference. mmproj adds ~1.3 GB on top of base weights; monitor against the 93% ceiling.
 
 ---
 
@@ -310,9 +355,60 @@ Standard single-token inference (no MTP). Shares the `qwen36_agent` macro with t
 | Alias | Thinking | Temp | Use case |
 |---|---|---|---|
 | `huihui-35b-abliterated` | OFF | 0.7 | Non-thinking interactive |
-| `huihui-35b-abliterated-think` | ON | 1.0 | Thinking interactive |
+| `qwen36abl-plan` | ON | 1.0 | Thinking interactive |
 
 **VRAM estimate:** ~21.3 GB weights (Q4_K_M) + ~1 GB KV at 245k context ≈ 22.8 GB (~93%). At the ceiling — check VRAM after first inference.
+
+---
+
+### gemma4-12b-obliterated-mtp
+
+| | |
+|---|---|
+| **Architecture** | Gemma 4 12B (dense), abliterated + external MTP draft model |
+| **GGUF (main)** | Gemma-4-12B-OBLITERATED.Q8_0.gguf |
+| **GGUF (draft)** | gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf |
+| **Context** | 262,144 |
+| **Macro** | `gemma4_12b_mtp` (self-contained); per-alias via `setParamsByID` |
+| **Role** | user |
+| **Upstream** | [BarryFutureman/Gemma-4-12B-OBLITERATED](https://huggingface.co/BarryFutureman/Gemma-4-12B-OBLITERATED) |
+
+Q8_0 for both main and draft model — highest quality at 12B scale. The QAT draft model is specifically trained for MTP speculative decoding (QAT = quantization-aware training). Abliteration removes refusal vectors; interactive use only.
+
+`--spec-draft-n-max 4` (vs 3 for the 26B external drafter) — the dedicated QAT draft model is more accepting at higher n-max than the 26B assistant drafter.
+
+| Alias | Thinking | Temp | Use case |
+|---|---|---|---|
+| `gemma4-12b-obliterated-mtp` | OFF | 1.0 | Base entry |
+| `abliterated-plan` | ON | 1.0 | Thinking, exploration |
+
+**VRAM estimate:** 12B Q8_0 ≈ ~13 GB main weights + draft overhead + KV at 262k context. Comfortable on 24 GB. Verify with `rocm-smi --showmeminfo vram` after first inference.
+
+---
+
+### glm47-flash
+
+| | |
+|---|---|
+| **Architecture** | GLM-4.7 Flash (ZhipuAI, dense transformer with thinking mode) |
+| **GGUF** | GLM-4.7-Flash-UD-Q4_K_XL.gguf |
+| **Context** | 202,752 |
+| **Macro** | `glm47_flash` |
+| **Role** | developer |
+| **Listed** | No (`unlisted: true`) — available but not shown in `/v1/models` |
+| **Upstream** | [unsloth/GLM-4.7-Flash-GGUF](https://huggingface.co/unsloth/GLM-4.7-Flash-GGUF) |
+
+Standard single-token inference (no MTP). GLM-4.7 Flash is ZhipuAI's reasoning-capable model in the GLM-4 family. Uses `enable_thinking` for thinking mode — same mechanism as Gemma 4, incompatible with Qwen3.6's `--reasoning` flag.
+
+`unlisted: true` keeps it off the `/v1/models` listing; the model is still accessible by ID or alias and preselectable in Open WebUI. Useful for experimental or secondary models that shouldn't clutter the default picker.
+
+| Alias | Thinking | Temp | Use case |
+|---|---|---|---|
+| `glm47-flash` | OFF | 1.0 | Base entry |
+| `glm47-flash-code` | OFF | 0.7 | Coding, structured output |
+| `glm47-flash-plan` | ON | 1.0 | Reasoning, planning |
+
+**VRAM estimate:** Q4_K_XL at ~7B effective size — comfortable well under the 93% ceiling. KV cache at 202k context adds modestly.
 
 ---
 
@@ -350,10 +446,12 @@ The `--ctx-size` values in `config.yaml` are outputs of that process.
 
 | Model | Approx. VRAM | Status |
 |---|---|---|
-| Qwen3.6-35B-A3B-MTP (IQ4_NL, 262k ctx) | ~21.6 GB | within ceiling |
+| Qwen3.6-35B-A3B-MTP (Q4_K_S, 262k ctx) | — | verify after load |
 | Gemma 4 26B-A4B-MTP (Q4_K_XL + Q2_K, 262k ctx) | ~22 GB est. | verify after load |
-| Qwen3.6-35B-A3B Vision (IQ4_XS + mmproj, 262k ctx) | ~22 GB est. | verify after load |
+| Qwen3.6-35B-A3B Vision (IQ4_NL_XL + mmproj, 262k ctx) | — | verify after load |
 | Huihui 35B Abliterated (Q4_K_M, 245k ctx) | ~22.8 GB | at ceiling — monitor |
+| Gemma 4 12B Obliterated MTP (Q8_0 + Q8_0 draft, 262k ctx) | ~14 GB est. | comfortable |
+| GLM-4.7 Flash (Q4_K_XL, 202k ctx) | — | verify after load |
 | Rocinante X 12B (Q8_0, 188k ctx) | ~14 GB | comfortable |
 
 Only one model above ~15 GB can be resident at a time. llama-swap evicts automatically on first request to a different model.
@@ -399,7 +497,7 @@ Historical reference — these model IDs are no longer in `config.yaml`.
 | `qwen36-35b-a3b` (non-MTP) | Superseded by MTP variant |
 | `agent-mistral` | Removed from roster |
 | `qwen35-9b` | Removed from roster |
-| `glm47-agent` / `glm47-thinking` | GLM-4.7 removed from roster |
+| `glm47-agent` / `glm47-thinking` | Old GLM-4.7 entries removed; superseded by `glm47-flash` (new ID, new quant) |
 | `qwen36-27b-agent` | Removed; dense 27B + MTP deadlock on gfx1100 |
 | `qwen36-27b-q4km-reasoning` | Removed; dense 27B + MTP deadlock on gfx1100 |
 | `qwen36-27b-reasoning` | Removed from roster |

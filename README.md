@@ -1,6 +1,6 @@
 # llama-swap homelab
 
-Configuration for a multi-model LLM inference server on a single consumer GPU — five model families (instruct, thinking, vision, agent) over a local OpenAI-compatible API, built on [llama-swap](https://github.com/mostlygeek/llama-swap). The intent is to document one practical approach: an AMD Radeon RX 7900 XTX, 24 GB of VRAM, models tuned to fit within it one at a time without latency from reloads.
+Configuration for a multi-model LLM inference server on a single consumer GPU — seven models (instruct, thinking, vision, agent, abliterated) over a local OpenAI-compatible API, built on [llama-swap](https://github.com/mostlygeek/llama-swap). The intent is to document one practical approach: an AMD Radeon RX 7900 XTX, 24 GB of VRAM, models tuned to fit within it one at a time without latency from reloads.
 
 All primary inference models use MTP (Multi-Token Prediction) speculative decoding where supported. That meant working through KV cache quantization, context sizing methodology, and the constraints of two different MTP implementations — Qwen3.6 uses internal draft heads baked into the GGUF (MTP mainline since b9180); Gemma 4 uses an external draft model (PR #23398 merged into mainline). Both run on the standard system llama-server.
 
@@ -48,7 +48,7 @@ macros:
 
 One constraint worth knowing: llama-swap silently ignores `--ctx-size` when it appears in a macro that itself references another macro. To avoid this, macros only ever reference `${base}` — one level deep, no deeper. Context size always goes in the model entry itself.
 
-The `gemma4_mtp` macro is an exception: it is self-contained and does not reference `${base}` at all. This is required because Gemma 4 MTP uses a different binary from the system llama-server. Referencing `${base}` would pull in the wrong binary path.
+The `gemma4_mtp` and `gemma4_12b_mtp` macros are exceptions: self-contained and do not reference `${base}`. This is required because Gemma 4 MTP carries a structurally distinct set of flags and sampling defaults (temp 1.0, top-k 64, `enable_thinking`) that would conflict with inheriting from `${base}`. All models use `/usr/bin/llama-server` — Gemma 4 MTP support landed in PR #23398 and is now in mainline.
 
 ### Multi-Variant Models
 
@@ -58,7 +58,7 @@ The Qwen3.6-35B-A3B-MTP model runs two behavioral profiles (agent and planning/t
 "qwen36-35b-a3b-mtp":
   cmd: >
     ${qwen36_mtp_agent}
-    --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-IQ4_NL.gguf
+    --model /opt/llama/models/Qwen3.6-35B-A3B-MTP/Qwen3.6-35B-A3B-UD-Q4_K_S.gguf
     --ctx-size 262144
   filters:
     setParamsByID:
@@ -93,10 +93,12 @@ Two things keep the budget manageable:
 
 | Model | Context | Approx. VRAM |
 |---|---|---|
-| Qwen3.6-35B-A3B-MTP (MoE, IQ4_NL) | 262,144 | ~21.6 GB |
+| Qwen3.6-35B-A3B-MTP (MoE, Q4_K_S) | 262,144 | verify after load |
 | Gemma 4 26B-A4B-MTP (MoE, Q4_K_XL + Q2_K draft) | 262,144 | ~22 GB est. |
-| Qwen3.6-35B-A3B Vision (MoE, IQ4_XS + F16 mmproj) | 262,144 | ~22 GB est. |
-| Huihui 35B Abliterated (MoE, Q4_K_M) | 245,760 | ~21.5 GB |
+| Qwen3.6-35B-A3B Vision (MoE, IQ4_NL_XL + F16 mmproj) | 262,144 | verify after load |
+| Huihui 35B Abliterated (MoE, Q4_K_M) | 245,760 | ~22.8 GB |
+| Gemma 4 12B Obliterated MTP (Q8_0 + Q8_0 draft) | 262,144 | ~14 GB est. |
+| GLM-4.7 Flash (Q4_K_XL) | 202,752 | verify after load |
 | Rocinante-X-12B (Nemo, Q8_0) | 188,416 | ~14 GB |
 
 Only one model above ~15 GB fits in VRAM at a time. llama-swap evicts automatically on first request to a different model.
@@ -146,9 +148,11 @@ All primary inference models use MTP where the architecture supports it:
 |---|---|---|
 | `qwen36-35b-a3b-mtp` | Internal heads | Draft heads embedded in GGUF; system binary |
 | `gemma4-26b-a4b-mtp` | External drafter | Separate `--model-draft` GGUF; system binary (PR #23398 merged) |
+| `gemma4-12b-obliterated-mtp` | External drafter | QAT-trained draft model; n-max=4 |
 | `qwen36-35b-a3b-vision` | None | `--mmproj` incompatible with `--spec-type draft-mtp` |
 | `rocinante-x-12b` | None | Standard single-token inference |
 | `huihui-35b-abliterated` | None | Standard single-token inference |
+| `glm47-flash` | None | Standard single-token inference |
 
 **Internal heads (Qwen3.6-35B-A3B-MTP):** Draft heads are embedded in the main GGUF. No second model file needed. Runs on the standard system llama-server — MTP is mainline since b9180.
 
@@ -172,7 +176,7 @@ Required flags for both patterns:
 
 Qwen3.6 thinking mode runs slightly faster than agent mode because chain-of-thought tokens are more predictable — draft heads achieve higher acceptance rates on reasoning traces than on direct-answer output.
 
-MTP is not applied to dense models on this hardware — see Known Issues.
+Dense 27B models (Qwen3.6-27B, Bartowski variants) are excluded from MTP on this hardware due to a GPU spin-hang on the second load — see Known Issues. The Gemma 4 12B Obliterated uses a dedicated QAT draft model and is not affected by this constraint.
 
 ---
 
@@ -180,18 +184,22 @@ MTP is not applied to dense models on this hardware — see Known Issues.
 
 | Model ID | Architecture | Quant | Context | MTP | Role |
 |---|---|---|---|---|---|
-| `qwen36-35b-a3b-mtp` | Qwen3.6-35B-A3B (MoE) | IQ4_NL | 262,144 | Yes (internal) | developer |
+| `qwen36-35b-a3b-mtp` | Qwen3.6-35B-A3B (MoE) | Q4_K_S | 262,144 | Yes (internal) | developer |
 | `qwen36-code` | alias → `qwen36-35b-a3b-mtp` | — | — | — | developer |
 | `qwen36-plan` | alias → `qwen36-35b-a3b-mtp` | — | — | — | developer |
 | `gemma4-26b-a4b-mtp` | Gemma 4 26B-A4B (MoE) | Q4_K_XL + Q2_K | 262,144 | Yes (external) | developer |
 | `gemma4-code` | alias → `gemma4-26b-a4b-mtp` | — | — | — | developer |
 | `gemma4-plan` | alias → `gemma4-26b-a4b-mtp` | — | — | — | developer |
-| `rocinante-x-12b` | Rocinante-X-12B (Nemo) | Q8_0 | 188,416 | No | user |
-| `qwen36-35b-a3b-vision` | Qwen3.6-35B-A3B + mmproj | IQ4_XS + F16 | 262,144 | No | developer |
-| `agent-primary-vision` | alias → `qwen36-35b-a3b-vision` | — | — | — | developer |
-| `qwen36-chat-vision` | alias → `qwen36-35b-a3b-vision` | — | — | — | developer |
+| `gemma4-12b-obliterated-mtp` | Gemma 4 12B, abliterated | Q8_0 + Q8_0 | 262,144 | Yes (external) | user |
+| `abliterated-plan` | alias → `gemma4-12b-obliterated-mtp` | — | — | — | user |
+| `rocinante-x-12b` | Rocinante-X-12B (Nemo), unlisted | Q8_0 | 188,416 | No | user |
+| `qwen36-35b-a3b-vision` | Qwen3.6-35B-A3B + mmproj | IQ4_NL_XL + F16 | 262,144 | No | developer |
+| `qwen36-vision` | alias → `qwen36-35b-a3b-vision` | — | — | — | developer |
 | `huihui-35b-abliterated` | Qwen3.6-35B-A3B abliterated (MoE) | Q4_K_M | 245,760 | No | user |
-| `huihui-35b-abliterated-think` | alias → `huihui-35b-abliterated` | — | — | — | user |
+| `qwen36abl-plan` | alias → `huihui-35b-abliterated` | — | — | — | user |
+| `glm47-flash` | GLM-4.7 Flash, unlisted | Q4_K_XL | 202,752 | No | developer |
+| `glm47-flash-code` | alias → `glm47-flash` | — | — | — | developer |
+| `glm47-flash-plan` | alias → `glm47-flash` | — | — | — | developer |
 
 Aliases on a single llama-server process via `setParamsByID` — no reload on variant switch.
 
